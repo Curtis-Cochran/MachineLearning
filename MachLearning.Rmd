@@ -1,0 +1,123 @@
+---
+title: "Predicting Human Activity - Weight Lifting"
+author: "Curtis Cochran"
+date: "September 26, 2015"
+output: html_document
+---
+In this analysis, we will use human activity recognition data to create a model that will allow us to predict which of five different dumbbell excersises are being performed. The data we are using is titled "Wearable Computing: Accelerometers' Data Classification of Body Postures and Movements". 
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(caret)
+```
+After reading in the data and checking the dimensions we can see there are 160 variables consisting of 19622 observations. This seems like quite a bit of information and some preprocessing will be necessary to evaluate the usefullness of each of these variables and observations.
+```{r readdata, cache=T}
+#make sure your working directory is set correctly
+if(!file.exists("./data")){dir.create("./data")}
+fileUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+download.file(fileUrl,destfile="./data/pml-training.csv")
+trainingdata <- read.csv("./data/pml-training.csv")
+dim(trainingdata)
+
+fileUrltest <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+download.file(fileUrltest,destfile="./data/pml-testing.csv")
+testingdata <- read.csv("./data/pml-testing.csv")
+
+
+```
+
+Before starting we will split 75% of the data out for training and the remaining 25% will be used for testing.
+```{r split data}
+
+set.seed(12345)
+inTrain <- createDataPartition(y=trainingdata$classe,p=0.75, list=FALSE)
+training <- trainingdata[inTrain,]
+testing <- trainingdata[-inTrain,]
+```
+
+To start off, we remove the first 7 variables from the dataset as they are categorical or time-based and do not appear to be relevant for this particular analysis. The following variables are removed:
+```{r removevar}
+names(training[,1:7])
+training <- training[,-c(1:7)]
+
+```
+
+Next, we want to remove Zero and Near Zero Variance predictors. After performing these steps, we have removed 61 variables and 4904 observations.
+```{r nearZero}
+#Using nearZerova to reduce number of variables
+nearzero <- nearZeroVar(training)
+nztrain <- training[, -nearzero]
+dim(nztrain)
+```
+
+Next, we want to see if any variables are highly correlated but first we need to remove any variables that have NA values from the correlation matrix. An inspection of the data shows that there are many aggregated variables summarizing preceding observations. we don't feel they are necessary for this analysis and choose to remove them. Once removed, we can use the findCorrelation function to identify variables who have an absolute correlatioon above .75 and remove their pairs.
+```{r correlation}
+#create a correlation matrix
+nztrain <- nztrain[,colSums(is.na(nztrain))==0]
+cortrain <- cor(nztrain[,-c(53)])
+
+#use correlation matrix to find highly correlated variables and remove them
+cortrain <- findCorrelation(cortrain,cutoff=.75,verbose=F)
+training <- nztrain[,-cortrain]
+```
+
+After reducing the number of variables, we are left with 32 predictors and the outcome "classe".
+```{r final}
+str(training)
+dim(training)
+```
+
+Now that we have processed our dataset, we chose to use Random Forest for the model fit because we have multiple outcomes to predict and still have a relatively large number of predictors.  We will use the train function within the Caret package to perform these steps. 
+
+As you can see from the results below, resamplying was done using bootstrapped and our best accuracy was for trying 2 variables at each split using 500 trees.
+```{r randomforest, cache=T}
+#fitting the model using Random Forest
+modFit <- train(classe~.,method="rf",data=training)
+modFit$finalModel
+```
+
+We will use the Out-of-bag error estimate to find the estimate of the test set error vs cross-validation, citing documentation on Random Forests by Leo Breiman and Adele Cutler on the www.stat.berkely.edu website:
+
+*In random forests, there is no need for cross-validation or a separate test set to get an unbiased estimate of the test set error. It is estimated internally, during the run, as follows:*
+
+*Each tree is constructed using a different bootstrap sample from the original data. About one-third of the cases are left out of the bootstrap sample and not used in the construction of the kth tree.*
+
+*Put each case left out in the construction of the kth tree down the kth tree to get a classification. In this way, a test set classification is obtained for each case in about one-third of the trees. At the end of the run, take j to be the class that got most of the votes every time case n was oob. The proportion of times that j is not equal to the true class of n averaged over all cases is the oob error estimate. This has proven to be unbiased in many tests.*
+
+The OOB estimate of the error rate is equal to .77% or 99.23% accuracy.
+
+Next we use the confusion matrix to evaluate the model against the testing set and find the accuracy of the model to be 99.14%. Slightly less than the training set as expected.
+
+```{r testfit}
+#testing fit of model against test cases using confusion matrix
+predictTest <- predict(modFit,newdata=testing)
+confusionMatrix(predictTest,testing$classe)
+```
+
+A plot of variable importance shows which predictors are the most necessary for the model to be accurate.
+```{r plotfit}
+rfPlot <- varImp(modFit)
+plot(rfPlot)
+```
+
+In conclusion, the model fit using Random Forest appears to be highly accurate and an efficent method to predict the class of dumbbell excersizes using the human activty recognition data supplied.
+
+```{r predictions,echo=F,eval=F}
+predictFinal <- predict(modFit,newdata=testingdata)
+predictFinal <- as.character(predictFinal)
+predictFinal
+
+```
+
+
+```{r submissions,echo=F,eval=F}
+
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+pml_write_files(predictFinal)
+```
